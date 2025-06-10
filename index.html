@@ -1,422 +1,226 @@
 <!DOCTYPE html>
-<html lang="ko">
-
+<html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF 주석 및 서명 도구</title>
-    <style>
-        body {
-            margin: 0;
-            font-family: sans-serif;
-        }
-
-        #toolbar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background: #333;
-            color: white;
-            padding: 10px;
-            display: flex;
-            flex-wrap: wrap;
-            z-index: 10;
-            gap: 6px;
-        }
-
-        #toolbar>* {
-            margin: 2px;
-        }
-
-        #pdf-container {
-            position: absolute;
-            top: 60px;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            overflow: auto;
-            touch-action: none;
-        }
-
-        #canvas-wrapper {
-            position: relative;
-            display: inline-block;
-        }
-
-        #pdf-bg-canvas,
-        #pdf-canvas {
-            display: block;
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
-
-        #pdf-bg-canvas {
-            z-index: 0;
-        }
-
-        #pdf-canvas {
-            z-index: 1;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>PDF Annotator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+  <style>
+    #pdf-container { position: relative; display: inline-block; }
+    canvas { border: 1px solid #ccc; display: block; }
+    #toolbar { margin-bottom: 10px; }
+  </style>
 </head>
-
 <body>
+  <div id="toolbar">
+    <input type="file" id="file-input" accept="application/pdf">
+    <button onclick="setMode('pan')">이동</button>
+    <button onclick="setMode('draw')">서명</button>
+    <button onclick="setMode('text')">텍스트</button>
+    <input type="color" id="font-color" value="#000000">
+    <input type="number" id="font-size" value="20" min="10" max="100">
+  </div>
+  <div id="pdf-container">
+    <canvas id="pdf-canvas"></canvas>
+    <canvas id="fg-canvas"></canvas>
+  </div>
 
-    <div id="toolbar">
-        <button onclick="prevPage()">⬅ 이전</button>
-        <span>페이지 <span id="page-num">1</span> / <span id="page-count">?</span></span>
-        <button onclick="nextPage()">다음 ➡</button>
+  <script>
+    let pdfDoc = null;
+    let currentPage = 1;
+    let scale = 1.5;
+    let pdfCanvas = document.getElementById('pdf-canvas');
+    let fgCanvas = document.getElementById('fg-canvas');
+    let pdfCtx = pdfCanvas.getContext('2d');
+    let fabricCanvas = null;
+    let mode = 'pan';
+    let annotations = {};
 
-        <button onclick="setMode('pan')">이동</button>
-        <button onclick="setMode('draw')">서명</button>
-        <button onclick="setMode('text')">텍스트</button>
-        <button onclick="addText()">텍스트 추가</button>
+    document.getElementById('file-input').addEventListener('change', async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
 
-        <input type="color" id="font-color" value="#000000">
-        <select id="font-size">
-            <option value="16">16</option>
-            <option value="20" selected>20</option>
-            <option value="24">24</option>
-        </select>
+      const fileReader = new FileReader();
+      fileReader.onload = async function() {
+        const typedarray = new Uint8Array(this.result);
+        pdfDoc = await pdfjsLib.getDocument({ data: typedarray }).promise;
+        currentPage = 1;
+        annotations = {};
+        renderPage(currentPage);
+      };
+      fileReader.readAsArrayBuffer(file);
+    });
 
-        <button onclick="undo()">↩ 실행 취소</button>
-        <button onclick="redo()">↪ 다시 실행</button>
+    async function renderPage(pageNum) {
+      const page = await pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale: scale });
+      pdfCanvas.height = viewport.height;
+      pdfCanvas.width = viewport.width;
+      fgCanvas.height = viewport.height;
+      fgCanvas.width = viewport.width;
 
-        <button onclick="zoomIn()">🔍 확대</button>
-        <button onclick="zoomOut()">🔎 축소</button>
+      const renderContext = {
+        canvasContext: pdfCtx,
+        viewport: viewport
+      };
+      await page.render(renderContext).promise;
+      initFabricCanvas();
+    }
 
-        <input type="file" accept="image/*" onchange="addImageSignature(this)">
-        <input type="file" accept=".pdf,application/pdf" onchange="loadPDF(this)">
-        <input type="file" accept=".json,application/json" onchange="loadFromFile(this)">
-        <button onclick="downloadAnnotations()">주석 저장</button>
-        <button onclick="uploadAnnotationsToServer()">서버에 저장</button>
-        <button onclick="loadAnnotationsFromServer()">서버에서 불러오기</button>
-        <button onclick="exportPDF()">PDF로 저장</button>
-    </div>
+    function initFabricCanvas() {
+      fabricCanvas = new fabric.Canvas('fg-canvas', {
+        isDrawingMode: false,
+        selection: false,
+        preserveObjectStacking: true
+      });
 
-    <div id="pdf-container">
-        <div id="canvas-wrapper">
-            <canvas id="pdf-bg-canvas"></canvas> <!-- PDF 렌더링용 -->
-            <canvas id="pdf-canvas"></canvas> <!-- Fabric.js용 -->
-        </div>
-    </div>
+      if (annotations[currentPage]) {
+        fabricCanvas.loadFromJSON(annotations[currentPage], fabricCanvas.renderAll.bind(fabricCanvas));
+      }
 
-    <!-- 라이브러리 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+      fabricCanvas.on('object:added', saveHistory);
+      fabricCanvas.on('object:modified', saveHistory);
+      fabricCanvas.on('object:removed', saveHistory);
 
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      fabricCanvas.on('mouse:down', function(opt) {
+        if (mode === 'text') {
+          const pointer = fabricCanvas.getPointer(opt.e);
+          const text = new fabric.Textbox('텍스트', {
+            left: pointer.x,
+            top: pointer.y,
+            fontSize: parseInt(document.getElementById('font-size').value, 10),
+            fill: document.getElementById('font-color').value,
+            editable: true
+          });
+          fabricCanvas.add(text).setActiveObject(text);
+          saveHistory();
+        }
+      });
 
-        let pdfDoc = null,
-            currentPage = 1,
-            scale = 1.5;
-        let fabricCanvas = null,
-            renderTask = null,
-            isRendering = false;
-        let annotations = {},
-            mode = 'pan';
-        let undoStack = [],
-            redoStack = [];
+      setMode(mode);
+    }
 
-        const bgCanvas = document.getElementById('pdf-bg-canvas');
-        const fgCanvas = document.getElementById('pdf-canvas');
-        const bgCtx = bgCanvas.getContext('2d');
+    function saveAnnotations() {
+      if (fabricCanvas) {
+        annotations[currentPage] = JSON.stringify(fabricCanvas);
+      }
+    }
 
-        function setMode(m) {
-            mode = m;
-            if (!fabricCanvas) return;
+    function setMode(m) {
+      mode = m;
+      if (!fabricCanvas) return;
 
-            // 드로잉 모드 설정
-            fabricCanvas.isDrawingMode = (mode === 'draw');
-            if (mode === 'draw') {
-                fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
-                fabricCanvas.freeDrawingBrush.color = document.getElementById('font-color').value;
-                fabricCanvas.freeDrawingBrush.width = 2;
-            }
+      fabricCanvas.isDrawingMode = (mode === 'draw');
+      if (mode === 'draw') {
+        fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
+        fabricCanvas.freeDrawingBrush.color = document.getElementById('font-color').value;
+        fabricCanvas.freeDrawingBrush.width = 2;
+      }
 
-            // 객체 선택 설정
-            const selectable = (mode === 'text' || mode === 'pan'); // 둘 다 조작 허용
-            fabricCanvas.selection = selectable;
-            fabricCanvas.forEachObject(obj => {
-                obj.selectable = selectable;
-                obj.evented = selectable;
-                obj.hasControls = selectable;
-            });
+      const isText = (mode === 'text');
+      fabricCanvas.selection = isText;
+      fabricCanvas.forEachObject(obj => {
+        obj.selectable = isText;
+        obj.evented = isText;
+        obj.hasControls = isText;
+      });
+
+      enablePanModeEvents();
+    }
+
+    function saveHistory() {
+      saveAnnotations();
+    }
+
+    let isDragging = false;
+    let lastPosX = 0, lastPosY = 0;
+
+    function enablePanModeEvents() {
+      if (!fabricCanvas) return;
+
+      fabricCanvas.off('mouse:down');
+      fabricCanvas.off('mouse:move');
+      fabricCanvas.off('mouse:up');
+
+      fabricCanvas.on('mouse:down', function (opt) {
+        if (mode !== 'pan') return;
+        isDragging = true;
+        const pointer = fabricCanvas.getPointer(opt.e);
+        lastPosX = pointer.x;
+        lastPosY = pointer.y;
+        fabricCanvas.selection = false;
+      });
+
+      fabricCanvas.on('mouse:move', function (opt) {
+        if (!isDragging || mode !== 'pan') return;
+        const pointer = fabricCanvas.getPointer(opt.e);
+        const dx = pointer.x - lastPosX;
+        const dy = pointer.y - lastPosY;
+        fabricCanvas.relativePan(new fabric.Point(dx, dy));
+        lastPosX = pointer.x;
+        lastPosY = pointer.y;
+      });
+
+      fabricCanvas.on('mouse:up', function () {
+        isDragging = false;
+        fabricCanvas.selection = true;
+      });
+
+      window.addEventListener('keydown', function (e) {
+        if (mode !== 'pan') return;
+        const delta = 10;
+        switch (e.key) {
+          case 'ArrowUp':
+            fabricCanvas.relativePan({ x: 0, y: delta }); break;
+          case 'ArrowDown':
+            fabricCanvas.relativePan({ x: 0, y: -delta }); break;
+          case 'ArrowLeft':
+            fabricCanvas.relativePan({ x: delta, y: 0 }); break;
+          case 'ArrowRight':
+            fabricCanvas.relativePan({ x: -delta, y: 0 }); break;
+        }
+      });
+
+      let lastTouchDistance = 0;
+      fgCanvas.addEventListener('touchmove', function (e) {
+        if (mode !== 'pan' || e.touches.length !== 2) return;
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (lastTouchDistance === 0) {
+          lastTouchDistance = dist;
+          return;
         }
 
-        function saveHistory() {
-            if (!fabricCanvas) return;
-            undoStack.push(fabricCanvas.toJSON());
-            if (undoStack.length > 50) undoStack.shift();
-            redoStack = [];
+        if (Math.abs(dist - lastTouchDistance) > 10) {
+          scale += (dist > lastTouchDistance) ? 0.05 : -0.05;
+          scale = Math.max(0.5, Math.min(3, scale));
+          saveAnnotations();
+          renderPage(currentPage);
+          lastTouchDistance = dist;
         }
+      });
 
-        function undo() {
-            if (!undoStack.length) return;
-            redoStack.push(fabricCanvas.toJSON());
-            const prev = undoStack.pop();
-            fabricCanvas.loadFromJSON(prev, () => fabricCanvas.renderAll());
+      fgCanvas.addEventListener('touchend', () => {
+        lastTouchDistance = 0;
+      });
+    }
+
+    document.addEventListener('dblclick', function (e) {
+      if (mode !== 'text') return;
+      const pointer = fabricCanvas.getPointer(e);
+      const target = fabricCanvas.findTarget(e);
+      if (target && target.type === 'textbox') {
+        const newText = prompt("텍스트 수정:", target.text);
+        if (newText !== null) {
+          target.text = newText;
+          fabricCanvas.requestRenderAll();
+          saveHistory();
         }
-
-        function redo() {
-            if (!redoStack.length) return;
-            undoStack.push(fabricCanvas.toJSON());
-            const next = redoStack.pop();
-            fabricCanvas.loadFromJSON(next, () => fabricCanvas.renderAll());
-        }
-
-        function addText() {
-            if (!fabricCanvas) return;
-            const input = prompt("텍스트 입력:");
-            if (!input) return;
-            const textbox = new fabric.Textbox(input, {
-                left: 100,
-                top: 100,
-                fontSize: parseInt(document.getElementById('font-size').value),
-                fill: document.getElementById('font-color').value,
-                selectable: true,
-                hasControls: true
-            });
-            fabricCanvas.add(textbox);
-            fabricCanvas.setActiveObject(textbox);
-            fabricCanvas.requestRenderAll();
-            saveHistory();
-        }
-
-        function addImageSignature(input) {
-            const reader = new FileReader();
-            reader.onload = e => {
-                fabric.Image.fromURL(e.target.result, img => {
-                    img.scale(0.3);
-                    img.set({
-                        left: 100,
-                        top: 100,
-                        selectable: true,
-                        hasControls: true,
-                        lockUniScaling: false
-                    });
-                    fabricCanvas.add(img);
-                    fabricCanvas.setActiveObject(img);
-                    fabricCanvas.requestRenderAll();
-                    saveHistory();
-                });
-            };
-            reader.readAsDataURL(input.files[0]);
-        }
-
-        function saveAnnotations() {
-            if (fabricCanvas) {
-                annotations[currentPage] = JSON.stringify(fabricCanvas.toJSON());
-            }
-        }
-
-        function loadAnnotations() {
-            const data = annotations[currentPage];
-            if (data) {
-                fabricCanvas.loadFromJSON(data, () => {
-                    fabricCanvas.renderAll();
-                });
-            }
-        }
-
-        function initFabricCanvas(viewport) {
-            if (fabricCanvas) fabricCanvas.dispose();
-
-            fabricCanvas = new fabric.Canvas('pdf-canvas', {
-                selection: mode === 'text',
-                isDrawingMode: mode === 'draw',
-                preserveObjectStacking: true
-            });
-
-            fabricCanvas.setWidth(viewport.width);
-            fabricCanvas.setHeight(viewport.height);
-            fgCanvas.style.width = viewport.width + "px";
-            fgCanvas.style.height = viewport.height + "px";
-            bgCanvas.style.width = viewport.width + "px";
-            bgCanvas.style.height = viewport.height + "px";
-
-            fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
-            fabricCanvas.freeDrawingBrush.color = document.getElementById('font-color').value;
-            fabricCanvas.freeDrawingBrush.width = 2;
-
-            ['object:added', 'object:modified', 'object:removed'].forEach(event => {
-                fabricCanvas.on(event, saveHistory);
-            });
-
-            loadAnnotations();
-        }
-
-        function renderPage(num) {
-            if (isRendering) return;
-            isRendering = true;
-
-            if (renderTask) {
-                try {
-                    renderTask.cancel();
-                } catch {}
-                renderTask = null;
-            }
-
-            pdfDoc.getPage(num).then(page => {
-                const viewport = page.getViewport({
-                    scale
-                });
-                bgCanvas.width = viewport.width;
-                bgCanvas.height = viewport.height;
-                fgCanvas.width = viewport.width;
-                fgCanvas.height = viewport.height;
-
-                renderTask = page.render({
-                    canvasContext: bgCtx,
-                    viewport
-                });
-                return renderTask.promise.then(() => {
-                    renderTask = null;
-                    initFabricCanvas(viewport);
-                    document.getElementById('page-num').textContent = num;
-                    document.getElementById('page-count').textContent = pdfDoc.numPages;
-                    isRendering = false;
-                });
-            }).catch(err => {
-                if (!(err instanceof pdfjsLib.RenderingCancelledException)) console.error(err);
-                isRendering = false;
-            });
-        }
-
-        function prevPage() {
-            if (currentPage <= 1) return;
-            saveAnnotations();
-            currentPage--;
-            renderPage(currentPage);
-        }
-
-        function nextPage() {
-            if (currentPage >= pdfDoc.numPages) return;
-            saveAnnotations();
-            currentPage++;
-            renderPage(currentPage);
-        }
-
-        function loadPDF(input) {
-            const file = input.files[0];
-            const reader = new FileReader();
-            reader.onload = e => {
-                pdfjsLib.getDocument({
-                    data: new Uint8Array(e.target.result)
-                }).promise.then(doc => {
-                    pdfDoc = doc;
-                    annotations = {};
-                    currentPage = 1;
-                    renderPage(currentPage);
-                });
-            };
-            reader.readAsArrayBuffer(file);
-        }
-
-        function downloadAnnotations() {
-            saveAnnotations();
-            const blob = new Blob([JSON.stringify(annotations)], {
-                type: 'application/json'
-            });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'annotations.json';
-            a.click();
-        }
-
-        function loadFromFile(input) {
-            const reader = new FileReader();
-            reader.onload = () => {
-                try {
-                    annotations = JSON.parse(reader.result);
-                    renderPage(currentPage);
-                } catch {
-                    alert("불러오기 실패");
-                }
-            };
-            reader.readAsText(input.files[0]);
-        }
-
-        function uploadAnnotationsToServer() {
-            saveAnnotations();
-            fetch('/save-annotations', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(annotations)
-            }).then(res => res.ok ? alert('서버 저장 완료') : alert('저장 실패'));
-        }
-
-        function loadAnnotationsFromServer() {
-            fetch('/load-annotations')
-                .then(res => res.json())
-                .then(data => {
-                    annotations = data;
-                    renderPage(currentPage);
-                })
-                .catch(() => alert('서버에서 불러오기 실패'));
-        }
-
-        function zoomIn() {
-            scale += 0.1;
-            saveAnnotations();
-            renderPage(currentPage);
-        }
-
-        function zoomOut() {
-            scale = Math.max(0.5, scale - 0.1);
-            saveAnnotations();
-            renderPage(currentPage);
-        }
-
-        async function exportPDF() {
-            const {
-                jsPDF
-            } = window.jspdf;
-            const pdf = new jsPDF();
-
-            for (let i = 1; i <= pdfDoc.numPages; i++) {
-                currentPage = i;
-                saveAnnotations();
-                await pdfDoc.getPage(i).then(async page => {
-                    const viewport = page.getViewport({
-                        scale
-                    });
-                    const tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = viewport.width;
-                    tempCanvas.height = viewport.height;
-                    await page.render({
-                        canvasContext: tempCanvas.getContext('2d'),
-                        viewport
-                    }).promise;
-
-                    const tempFabric = new fabric.StaticCanvas(tempCanvas);
-                    if (annotations[i]) {
-                        await new Promise(resolve => tempFabric.loadFromJSON(annotations[i], () => {
-                            tempFabric.renderAll();
-                            resolve();
-                        }));
-                    }
-
-                    const imgData = tempCanvas.toDataURL('image/png');
-                    const width = pdf.internal.pageSize.getWidth();
-                    const height = (viewport.height / viewport.width) * width;
-                    pdf.addImage(imgData, 'PNG', 0, 0, width, height);
-                    if (i < pdfDoc.numPages) pdf.addPage();
-                });
-            }
-
-            pdf.save('annotated.pdf');
-        }
-    </script>
-
+      }
+    });
+  </script>
 </body>
-
 </html>
