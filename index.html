@@ -88,8 +88,8 @@
         <button onclick="zoomOut()">🔎 축소</button>
 
         <input type="file" accept="image/*" onchange="addImageSignature(this)">
-        <input type="file" accept="application/pdf" onchange="loadPDF(this)">
-        <input type="file" accept=".json" onchange="loadFromFile(this)">
+        <input type="file" accept=".pdf,application/pdf" onchange="loadPDF(this)">
+        <input type="file" accept=".json,application/json" onchange="loadFromFile(this)">
         <button onclick="downloadAnnotations()">주석 저장</button>
         <button onclick="uploadAnnotationsToServer()">서버에 저장</button>
         <button onclick="loadAnnotationsFromServer()">서버에서 불러오기</button>
