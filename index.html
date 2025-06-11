@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>PDF TEST 25061110</title>
+    <title>PDF TEST 25061201</title>
     <style>
         body {
             margin: 0;
@@ -40,7 +40,7 @@
         }
         #pdf-container {
             position: fixed;
-            top: 60px;
+            top: 60px; /* Adjust based on toolbar height */
             bottom: 0;
             left: 0;
             right: 0;
@@ -65,7 +65,8 @@
         }
         #pdf-canvas {
             z-index: 2;
-            touch-action: none; /* Fabric.js 터치 동작 보장 */
+            /* touch-action is handled by fabric.js, but this can be a safeguard */
+            touch-action: none;
         }
         #mode-indicator {
             position: fixed;
@@ -119,17 +120,16 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
         let pdfDoc = null, pageNum = 1, scale = 1.5;
-        const pdfCanvas = document.getElementById('pdf-canvas');
         const bgCanvas = document.getElementById('pdf-bg-canvas');
-        const canvasWrapper = document.getElementById('canvas-wrapper');
         const ctx = bgCanvas.getContext('2d');
+        const canvasWrapper = document.getElementById('canvas-wrapper');
         const penColor = document.getElementById('pen-color');
         const penWidth = document.getElementById('pen-width');
         const modeIndicator = document.getElementById('mode-indicator');
 
         let fabricCanvas = new fabric.Canvas('pdf-canvas', {
             isDrawingMode: false,
-            selection: false
+            selection: false // 개체 선택 비활성화
         });
 
         let mode = 'move';
@@ -142,14 +142,16 @@
             fabricCanvas.isDrawingMode = (mode === 'draw');
             if (fabricCanvas.isDrawingMode) {
                 fabricCanvas.freeDrawingBrush.color = penColor.value;
-                fabricCanvas.freeDrawingBrush.width = parseInt(penWidth.value);
+                fabricCanvas.freeDrawingBrush.width = parseInt(penWidth.value, 10);
             }
             modeIndicator.textContent = '모드: ' + (mode === 'move' ? '이동' : '서명');
         }
 
         function saveHistory() {
             if (fabricCanvas._loading) return;
-            if (historyIndex < history.length - 1) history = history.slice(0, historyIndex + 1);
+            if (historyIndex < history.length - 1) {
+                history = history.slice(0, historyIndex + 1);
+            }
             history.push(JSON.stringify(fabricCanvas));
             historyIndex++;
         }
@@ -162,6 +164,7 @@
                     pdfDoc = await pdfjsLib.getDocument({ data: typedArray }).promise;
                     document.getElementById('page-count').textContent = pdfDoc.numPages;
                     pageNum = 1;
+                    pageDrawings = {}; // 새 파일 로드 시 기존 서명 초기화
                     renderPage(pageNum);
                 } catch (err) {
                     alert('PDF 로딩 실패');
@@ -172,6 +175,7 @@
         }
 
         async function renderPage(num) {
+            if (!pdfDoc) return;
             const page = await pdfDoc.getPage(num);
             const viewport = page.getViewport({ scale });
 
@@ -195,15 +199,20 @@
                 fabricCanvas.loadFromJSON(pageDrawings[num], () => {
                     fabricCanvas.renderAll();
                     fabricCanvas._loading = false;
-                    saveHistory();
                 });
             }
+            
+            // 페이지를 다시 렌더링한 후 히스토리 초기화
+            history = [JSON.stringify(fabricCanvas)];
+            historyIndex = 0;
 
             document.getElementById('page-num').textContent = pageNum;
         }
 
         function saveCurrentPageDrawing() {
-            pageDrawings[pageNum] = JSON.stringify(fabricCanvas);
+            if (pdfDoc) {
+                pageDrawings[pageNum] = JSON.stringify(fabricCanvas);
+            }
         }
 
         function prevPage() {
@@ -221,11 +230,13 @@
         }
 
         function zoomIn() {
+            if (!pdfDoc) return;
             scale *= 1.2;
             renderPage(pageNum);
         }
 
         function zoomOut() {
+            if (!pdfDoc) return;
             scale /= 1.2;
             renderPage(pageNum);
         }
@@ -244,94 +255,135 @@
             }
         }
 
-        function exportPDF() {
+        async function exportPDF() {
+            if (!pdfDoc) {
+                alert("먼저 PDF 파일을 로드해주세요.");
+                return;
+            }
             saveCurrentPageDrawing();
+            
             const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF();
-            let addPage = false;
+            let pdf;
 
-            (async () => {
-                for (let i = 1; i <= pdfDoc.numPages; i++) {
-                    const page = await pdfDoc.getPage(i);
-                    const viewport = page.getViewport({ scale });
-                    const tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = viewport.width;
-                    tempCanvas.height = viewport.height;
-                    const tempCtx = tempCanvas.getContext('2d');
-                    await page.render({ canvasContext: tempCtx, viewport }).promise;
+            // 첫 페이지의 방향을 기준으로 PDF 생성
+            const firstPageForInfo = await pdfDoc.getPage(1);
+            const firstViewport = firstPageForInfo.getViewport({ scale: 1 });
+            const orientation = firstViewport.width > firstViewport.height ? 'l' : 'p';
+            pdf = new jsPDF({ orientation, unit: 'pt', format: [firstViewport.width, firstViewport.height] });
 
-                    const tempFabric = new fabric.StaticCanvas(tempCanvas);
-                    if (pageDrawings[i]) {
-                        await new Promise(resolve => {
-                            tempFabric.loadFromJSON(pageDrawings[i], () => {
-                                tempFabric.renderAll();
-                                resolve();
-                            });
-                        });
-                    }
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const page = await pdfDoc.getPage(i);
+                const viewport = page.getViewport({ scale: 1 }); // 고해상도 출력을 위해 scale 1로 렌더링
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = viewport.width;
+                tempCanvas.height = viewport.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                await page.render({ canvasContext: tempCtx, viewport }).promise;
 
-                    const img = tempCanvas.toDataURL('image/jpeg', 1.0);
-                    if (addPage) pdf.addPage();
-                    pdf.addImage(img, 'JPEG', 0, 0, 210, 297);
-                    addPage = true;
+                if (pageDrawings[i]) {
+                    const tempFabric = new fabric.Canvas(null);
+                    tempFabric.setWidth(viewport.width);
+                    tempFabric.setHeight(viewport.height);
+                    
+                    await new Promise(resolve => {
+                       tempFabric.loadFromJSON(pageDrawings[i], () => {
+                           // 원본 PDF 위에 서명 레이어를 그립니다.
+                           tempCtx.drawImage(tempFabric.getElement(), 0, 0);
+                           resolve();
+                       });
+                    });
                 }
-                pdf.save("annotated.pdf");
-            })();
+
+                const img = tempCanvas.toDataURL('image/png');
+                
+                if (i > 1) {
+                    pdf.addPage([viewport.width, viewport.height], viewport.width > viewport.height ? 'l' : 'p');
+                } else {
+                    // 첫 페이지는 이미 생성되었으므로 크기만 맞춥니다.
+                    const properties = pdf.getFont().metadata.helvetica.am;
+                    const pageInfo = pdf.getCurrentPageInfo();
+                    pageInfo.pageContext.mediaBox.upperRightX = viewport.width;
+                    pageInfo.pageContext.mediaBox.upperRightY = viewport.height;
+                }
+                pdf.addImage(img, 'PNG', 0, 0, viewport.width, viewport.height);
+            }
+            pdf.save("annotated.pdf");
         }
 
         document.getElementById('pdf-loader').addEventListener('change', e => {
             const file = e.target.files[0];
-            if (file && file.type === 'application/pdf') loadPDF(file);
-            else alert("PDF 파일만 선택 가능합니다.");
+            if (file && file.type === 'application/pdf') {
+                loadPDF(file);
+            } else {
+                alert("PDF 파일만 선택 가능합니다.");
+            }
         });
 
         penColor.addEventListener('change', () => {
-            fabricCanvas.freeDrawingBrush.color = penColor.value;
+            if (fabricCanvas.isDrawingMode) {
+                fabricCanvas.freeDrawingBrush.color = penColor.value;
+            }
         });
+
         penWidth.addEventListener('change', () => {
-            fabricCanvas.freeDrawingBrush.width = parseInt(penWidth.value);
+            if (fabricCanvas.isDrawingMode) {
+                fabricCanvas.freeDrawingBrush.width = parseInt(penWidth.value, 10);
+            }
         });
 
-        pdfCanvas.addEventListener('mousedown', e => {
+        // --- 수정된 이벤트 핸들러 ---
+        // Fabric.js의 이벤트 시스템을 사용하여 이동(pan) 기능 구현
+        fabricCanvas.on('mouse:down', function(o) {
             if (mode !== 'move') return;
             isDragging = true;
-            startX = e.clientX;
-            startY = e.clientY;
+            const e = o.e;
+            // 모바일 터치와 PC 마우스 이벤트 모두 처리
+            if (e.touches) {
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            } else {
+                startX = e.clientX;
+                startY = e.clientY;
+            }
+            o.e.preventDefault();
+            o.e.stopPropagation();
         });
-        pdfCanvas.addEventListener('mousemove', e => {
-            if (!isDragging) return;
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
-            document.getElementById('pdf-container').scrollLeft -= dx;
-            document.getElementById('pdf-container').scrollTop -= dy;
-            startX = e.clientX;
-            startY = e.clientY;
-        });
-        pdfCanvas.addEventListener('mouseup', () => isDragging = false);
-        pdfCanvas.addEventListener('mouseleave', () => isDragging = false);
 
-        pdfCanvas.addEventListener('touchstart', e => {
-            if (mode !== 'move') return;
-            const touch = e.touches[0];
-            isDragging = true;
-            startX = touch.clientX;
-            startY = touch.clientY;
-        });
-        pdfCanvas.addEventListener('touchmove', e => {
-            if (!isDragging) return;
-            const touch = e.touches[0];
-            const dx = touch.clientX - startX;
-            const dy = touch.clientY - startY;
+        fabricCanvas.on('mouse:move', function(o) {
+            if (!isDragging || mode !== 'move') return;
+            const e = o.e;
+            let currentX, currentY;
+            if (e.touches) {
+                currentX = e.touches[0].clientX;
+                currentY = e.touches[0].clientY;
+            } else {
+                currentX = e.clientX;
+                currentY = e.clientY;
+            }
+            const dx = currentX - startX;
+            const dy = currentY - startY;
             document.getElementById('pdf-container').scrollLeft -= dx;
             document.getElementById('pdf-container').scrollTop -= dy;
-            startX = touch.clientX;
-            startY = touch.clientY;
+            startX = currentX;
+            startY = currentY;
         });
-        pdfCanvas.addEventListener('touchend', () => isDragging = false);
+
+        fabricCanvas.on('mouse:up', function(o) {
+            if (mode !== 'move') return;
+            isDragging = false;
+        });
+        
+        fabricCanvas.on('mouse:out', function(o) {
+            if (mode !== 'move') return;
+            isDragging = false;
+        });
+        // --- 여기까지 수정 ---
 
         fabricCanvas.on('object:added', () => { if (!fabricCanvas._loading) saveHistory(); });
-        fabricCanvas.on('object:modified', saveHistory);
-        fabricCanvas.on('object:removed', saveHistory);
+        // object:modified 와 object:removed 는 현재 사용하지 않으므로 주석 처리 또는 삭제 가능
+        // fabricCanvas.on('object:modified', saveHistory);
+        // fabricCanvas.on('object:removed', saveHistory);
 
         setMode('move');
     </script>
