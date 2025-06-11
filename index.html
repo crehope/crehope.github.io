@@ -1,397 +1,225 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>PDF TEST 25061203</title>
-    <style>
-        body {
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            overflow: hidden;
-        }
-        #toolbar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background: #f8f9fa;
-            color: #333;
-            padding: 8px 12px;
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            z-index: 1000;
-            border-bottom: 1px solid #dee2e6;
-            gap: 8px;
-            height: 50px; /* Toolbar height */
-        }
-        #toolbar button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        #toolbar button, #toolbar select, #toolbar input[type="file"]::file-selector-button {
-            padding: 6px 12px;
-            border: 1px solid #ced4da;
-            background-color: #fff;
-            color: #495057;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        #toolbar span {
-            font-size: 14px;
-            white-space: nowrap;
-        }
-        #pdf-container {
-            position: fixed;
-            top: 60px; /* Toolbar height + margin */
-            bottom: 0;
-            left: 0;
-            right: 0;
-            overflow: auto;
-            background-color: #e9ecef;
-            text-align: center;
-        }
-        #canvas-wrapper {
-            position: relative;
-            display: inline-block;
-            margin: 20px 0;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        }
-        canvas {
-            display: block;
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
-        #pdf-bg-canvas {
-            z-index: 1;
-        }
-        #pdf-canvas {
-            z-index: 2;
-            touch-action: none;
-        }
-        #mode-indicator {
-            position: fixed;
-            bottom: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: rgba(0, 0, 0, 0.7);
-            color: #fff;
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-size: 14px;
-            z-index: 1001;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF TEST 25061204</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      touch-action: none;
+    }
+    #toolbar {
+      display: flex;
+      gap: 5px;
+      padding: 5px;
+      background: #f0f0f0;
+    }
+    #canvas-container {
+      position: relative;
+      width: 100vw;
+      height: calc(100vh - 40px);
+      overflow: hidden;
+      touch-action: none;
+    }
+    #pdf-canvas, #fabric-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+      touch-action: none;
+    }
+    #fabric-canvas {
+      z-index: 2;
+    }
+  </style>
 </head>
-<body>
-    <div id="toolbar">
-        <input type="file" id="pdf-loader" accept="application/pdf">
-        <button onclick="prevPage()">⬅ 이전</button>
-        <span>페이지 <span id="page-num">0</span> / <span id="page-count">0</span></span>
-        <button onclick="nextPage()">다음 ➡</button>
-        <button onclick="setMode('move')">이동</button>
-        <button onclick="setMode('draw')">서명</button>
-        <input type="color" id="pen-color" value="#E53935">
-        <select id="pen-width">
-            <option value="1">1</option>
-            <option value="2" selected>2</option>
-            <option value="4">4</option>
-            <option value="8">8</option>
-        </select>
-        <button onclick="undo()">↩ 실행 취소</button>
-        <button onclick="redo()">↪ 다시 실행</button>
-        <button onclick="zoomIn()">➕ 확대</button>
-        <button onclick="zoomOut()">➖ 축소</button>
-        <button onclick="exportPDF()">저장하기</button>
-    </div>
+<body ontouchstart="">
+  <div id="toolbar">
+    <input type="file" id="file-input" accept="application/pdf">
+    <button onclick="setMode('move')">이동</button>
+    <button onclick="setMode('draw')">서명</button>
+    <button onclick="setMode('text')">텍스트</button>
+    <button onclick="undo()">Undo</button>
+    <button onclick="redo()">Redo</button>
+    <button onclick="prevPage()">이전</button>
+    <button onclick="nextPage()">다음</button>
+  </div>
+  <div id="canvas-container">
+    <canvas id="pdf-canvas"></canvas>
+    <canvas id="fabric-canvas"></canvas>
+  </div>
 
-    <div id="pdf-container">
-        <div id="canvas-wrapper">
-            <canvas id="pdf-bg-canvas"></canvas>
-            <canvas id="pdf-canvas"></canvas>
-        </div>
-    </div>
+  <script>
+    let pdfDoc = null,
+        currentPage = 1,
+        pdfCanvas = document.getElementById('pdf-canvas'),
+        fabricCanvas = new fabric.Canvas('fabric-canvas', { selection: true }),
+        mode = 'move',
+        pageDrawings = {},
+        history = [],
+        historyIndex = -1,
+        isPanning = false,
+        lastPos = { x: 0, y: 0 };
 
-    <div id="mode-indicator">모드: 이동</div>
+    const viewportScale = 1.5;
+    let currentViewport = null;
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-        let pdfDoc = null, pageNum = 1, scale = 1.5;
-        const pdfCanvas = document.getElementById('pdf-canvas');
-        const bgCanvas = document.getElementById('pdf-bg-canvas');
-        const ctx = bgCanvas.getContext('2d');
-        const canvasWrapper = document.getElementById('canvas-wrapper');
-        const penColor = document.getElementById('pen-color');
-        const penWidth = document.getElementById('pen-width');
-        const modeIndicator = document.getElementById('mode-indicator');
+    document.getElementById('file-input').addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (file && file.type === 'application/pdf') {
+        const reader = new FileReader();
+        reader.onload = function () {
+          const typedarray = new Uint8Array(this.result);
+          pdfjsLib.getDocument(typedarray).promise.then(doc => {
+            pdfDoc = doc;
+            currentPage = 1;
+            renderPage(currentPage);
+          });
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    });
 
-        let fabricCanvas = new fabric.Canvas('pdf-canvas', {
-            isDrawingMode: false,
-            selection: false
+    function renderPage(num) {
+      pdfDoc.getPage(num).then(page => {
+        currentViewport = page.getViewport({ scale: viewportScale });
+        pdfCanvas.width = currentViewport.width;
+        pdfCanvas.height = currentViewport.height;
+        pdfCanvas.style.width = currentViewport.width + 'px';
+        pdfCanvas.style.height = currentViewport.height + 'px';
+
+        fabricCanvas.setWidth(currentViewport.width);
+        fabricCanvas.setHeight(currentViewport.height);
+        fabricCanvas.clear();
+
+        const ctx = pdfCanvas.getContext('2d');
+        const renderContext = {
+          canvasContext: ctx,
+          viewport: currentViewport
+        };
+        page.render(renderContext).promise.then(() => {
+          if (pageDrawings[num]) {
+            fabricCanvas.loadFromJSON(pageDrawings[num], () => fabricCanvas.renderAll());
+          }
+          if (mode === 'draw') fabricCanvas.isDrawingMode = true;
         });
+      });
+    }
 
-        let mode = 'move';
-        let history = [], historyIndex = -1;
-        let pageDrawings = {};
-        let isDragging = false, startX = 0, startY = 0;
-        
-        // ✨✨✨ 오류 수정: 렌더링 중복 실행 방지를 위한 변수 추가 ✨✨✨
-        let isRendering = false;
+    function setMode(newMode) {
+      mode = newMode;
+      fabricCanvas.isDrawingMode = (mode === 'draw');
+      if (mode === 'text') {
+        fabricCanvas.on('mouse:down', addText);
+      } else {
+        fabricCanvas.off('mouse:down', addText);
+      }
+    }
 
-        function setMode(newMode) {
-            mode = newMode;
-            fabricCanvas.isDrawingMode = (mode === 'draw');
-            if (fabricCanvas.isDrawingMode) {
-                fabricCanvas.freeDrawingBrush.color = penColor.value;
-                fabricCanvas.freeDrawingBrush.width = parseInt(penWidth.value, 10);
-            }
-            modeIndicator.textContent = '모드: ' + (mode === 'move' ? '이동' : '서명');
+    function addText(opt) {
+      const pointer = fabricCanvas.getPointer(opt.e);
+      const text = new fabric.IText('텍스트', {
+        left: pointer.x,
+        top: pointer.y,
+        fontSize: 20,
+        fill: 'black',
+      });
+      fabricCanvas.add(text).setActiveObject(text);
+      saveHistory();
+    }
+
+    function saveCurrentPageDrawing() {
+      pageDrawings[currentPage] = fabricCanvas.toJSON();
+    }
+
+    function nextPage() {
+      if (currentPage < pdfDoc.numPages) {
+        saveCurrentPageDrawing();
+        currentPage++;
+        renderPage(currentPage);
+      }
+    }
+
+    function prevPage() {
+      if (currentPage > 1) {
+        saveCurrentPageDrawing();
+        currentPage--;
+        renderPage(currentPage);
+      }
+    }
+
+    function saveHistory() {
+      const json = JSON.stringify(fabricCanvas.toDatalessJSON());
+      history = history.slice(0, historyIndex + 1);
+      history.push(json);
+      historyIndex++;
+    }
+
+    function undo() {
+      if (historyIndex > 0) {
+        historyIndex--;
+        fabricCanvas.loadFromJSON(history[historyIndex], () => fabricCanvas.renderAll());
+      }
+    }
+
+    function redo() {
+      if (historyIndex < history.length - 1) {
+        historyIndex++;
+        fabricCanvas.loadFromJSON(history[historyIndex], () => fabricCanvas.renderAll());
+      }
+    }
+
+    fabricCanvas.on('path:created', saveHistory);
+
+    // 이동 모드 드래그
+    fabricCanvas.on('mouse:down', opt => {
+      if (mode === 'move') {
+        isPanning = true;
+        lastPos = fabricCanvas.getPointer(opt.e);
+      }
+    });
+
+    fabricCanvas.on('mouse:move', opt => {
+      if (isPanning && mode === 'move') {
+        const pointer = fabricCanvas.getPointer(opt.e);
+        const dx = pointer.x - lastPos.x;
+        const dy = pointer.y - lastPos.y;
+        fabricCanvas.relativePan({ x: dx, y: dy });
+        lastPos = pointer;
+      }
+    });
+
+    fabricCanvas.on('mouse:up', () => {
+      isPanning = false;
+    });
+
+    // 확대/축소 (터치 지원)
+    let lastDist = 0;
+    fabricCanvas.upperCanvasEl.addEventListener('touchmove', e => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (lastDist !== 0) {
+          const delta = dist - lastDist;
+          const zoom = fabricCanvas.getZoom() + delta * 0.001;
+          fabricCanvas.setZoom(Math.max(0.5, Math.min(3, zoom)));
         }
+        lastDist = dist;
+      }
+    }, { passive: false });
 
-        function saveHistory() {
-            if (fabricCanvas._loading) return;
-            if (historyIndex < history.length - 1) {
-                history = history.slice(0, historyIndex + 1);
-            }
-            history.push(JSON.stringify(fabricCanvas));
-            historyIndex++;
-        }
-
-        async function loadPDF(file) {
-            const reader = new FileReader();
-            reader.onload = async function () {
-                try {
-                    const typedArray = new Uint8Array(reader.result);
-                    pdfDoc = await pdfjsLib.getDocument({ data: typedArray }).promise;
-                    document.getElementById('page-count').textContent = pdfDoc.numPages;
-                    pageNum = 1;
-                    pageDrawings = {};
-                    renderPage(pageNum);
-                } catch (err) {
-                    alert('PDF 로딩 실패');
-                    console.error(err);
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        }
-        
-        // ✨✨✨ 오류 수정: 중복 렌더링 방지 로직 적용 ✨✨✨
-        async function renderPage(num) {
-            if (isRendering || !pdfDoc) return;
-            isRendering = true;
-            
-            document.querySelectorAll('#toolbar button').forEach(btn => btn.disabled = true);
-
-            try {
-                const page = await pdfDoc.getPage(num);
-                const viewport = page.getViewport({ scale });
-
-                bgCanvas.width = pdfCanvas.width = viewport.width;
-                bgCanvas.height = pdfCanvas.height = viewport.height;
-                bgCanvas.style.width = pdfCanvas.style.width = `${viewport.width}px`;
-                bgCanvas.style.height = pdfCanvas.style.height = `${viewport.height}px`;
-                canvasWrapper.style.width = `${viewport.width}px`;
-                canvasWrapper.style.height = `${viewport.height}px`;
-
-                await page.render({ canvasContext: ctx, viewport }).promise;
-
-                fabricCanvas.setWidth(viewport.width);
-                fabricCanvas.setHeight(viewport.height);
-                fabricCanvas.clear();
-
-                if (pageDrawings[num]) {
-                    fabricCanvas._loading = true;
-                    fabricCanvas.loadFromJSON(pageDrawings[num], () => {
-                        fabricCanvas.renderAll();
-                        fabricCanvas._loading = false;
-                    });
-                }
-                
-                history = [JSON.stringify(fabricCanvas)];
-                historyIndex = 0;
-                document.getElementById('page-num').textContent = pageNum;
-
-            } catch(err) {
-                console.error("페이지 렌더링 실패:", err);
-            } finally {
-                isRendering = false;
-                document.querySelectorAll('#toolbar button').forEach(btn => btn.disabled = false);
-            }
-        }
-
-        function saveCurrentPageDrawing() {
-            if (pdfDoc) {
-                pageDrawings[pageNum] = JSON.stringify(fabricCanvas);
-            }
-        }
-
-        function prevPage() {
-            if (pageNum <= 1) return;
-            saveCurrentPageDrawing();
-            pageNum--;
-            renderPage(pageNum);
-        }
-
-        function nextPage() {
-            if (pageNum >= pdfDoc.numPages) return;
-            saveCurrentPageDrawing();
-            pageNum++;
-            renderPage(pageNum);
-        }
-
-        function zoomIn() {
-            if (!pdfDoc) return;
-            scale *= 1.2;
-            renderPage(pageNum);
-        }
-
-        function zoomOut() {
-            if (!pdfDoc) return;
-            scale /= 1.2;
-            renderPage(pageNum);
-        }
-
-        function undo() {
-            if (historyIndex > 0) {
-                historyIndex--;
-                fabricCanvas.loadFromJSON(history[historyIndex], fabricCanvas.renderAll.bind(fabricCanvas));
-            }
-        }
-
-        function redo() {
-            if (historyIndex < history.length - 1) {
-                historyIndex++;
-                fabricCanvas.loadFromJSON(history[historyIndex], fabricCanvas.renderAll.bind(fabricCanvas));
-            }
-        }
-
-        async function exportPDF() {
-            if (!pdfDoc) {
-                alert("먼저 PDF 파일을 로드해주세요.");
-                return;
-            }
-            saveCurrentPageDrawing();
-            
-            const { jsPDF } = window.jspdf;
-            let pdf;
-
-            const firstPageForInfo = await pdfDoc.getPage(1);
-            const firstViewport = firstPageForInfo.getViewport({ scale: 1 });
-            const orientation = firstViewport.width > firstViewport.height ? 'l' : 'p';
-            pdf = new jsPDF({ orientation, unit: 'pt', format: [firstViewport.width, firstViewport.height] });
-
-            for (let i = 1; i <= pdfDoc.numPages; i++) {
-                const page = await pdfDoc.getPage(i);
-                const viewport = page.getViewport({ scale: 1 });
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = viewport.width;
-                tempCanvas.height = viewport.height;
-                const tempCtx = tempCanvas.getContext('2d');
-                
-                await page.render({ canvasContext: tempCtx, viewport }).promise;
-
-                if (pageDrawings[i]) {
-                    const tempFabric = new fabric.Canvas(null);
-                    tempFabric.setWidth(viewport.width);
-                    tempFabric.setHeight(viewport.height);
-                    
-                    await new Promise(resolve => {
-                       tempFabric.loadFromJSON(pageDrawings[i], () => {
-                           tempCtx.drawImage(tempFabric.getElement(), 0, 0);
-                           resolve();
-                       });
-                    });
-                }
-
-                const img = tempCanvas.toDataURL('image/png');
-                
-                if (i > 1) {
-                    pdf.addPage([viewport.width, viewport.height], viewport.width > viewport.height ? 'l' : 'p');
-                } else {
-                    const pageInfo = pdf.getCurrentPageInfo();
-                    pageInfo.pageContext.mediaBox.upperRightX = viewport.width;
-                    pageInfo.pageContext.mediaBox.upperRightY = viewport.height;
-                }
-                pdf.addImage(img, 'PNG', 0, 0, viewport.width, viewport.height);
-            }
-            pdf.save("annotated.pdf");
-        }
-
-        document.getElementById('pdf-loader').addEventListener('change', e => {
-            const file = e.target.files[0];
-            if (file && file.type === 'application/pdf') {
-                loadPDF(file);
-            } else {
-                alert("PDF 파일만 선택 가능합니다.");
-            }
-        });
-
-        penColor.addEventListener('change', () => {
-            if (fabricCanvas.isDrawingMode) {
-                fabricCanvas.freeDrawingBrush.color = penColor.value;
-            }
-        });
-
-        penWidth.addEventListener('change', () => {
-            if (fabricCanvas.isDrawingMode) {
-                fabricCanvas.freeDrawingBrush.width = parseInt(penWidth.value, 10);
-            }
-        });
-
-        fabricCanvas.on('mouse:down', function(o) {
-            if (mode !== 'move') return;
-            isDragging = true;
-            const e = o.e;
-            if (e.touches) {
-                startX = e.touches[0].clientX;
-                startY = e.touches[0].clientY;
-            } else {
-                startX = e.clientX;
-                startY = e.clientY;
-            }
-            o.e.preventDefault();
-            o.e.stopPropagation();
-        });
-
-        fabricCanvas.on('mouse:move', function(o) {
-            if (!isDragging || mode !== 'move') return;
-            const e = o.e;
-            let currentX, currentY;
-            if (e.touches) {
-                currentX = e.touches[0].clientX;
-                currentY = e.touches[0].clientY;
-            } else {
-                currentX = e.clientX;
-                currentY = e.clientY;
-            }
-            const dx = currentX - startX;
-            const dy = currentY - startY;
-            document.getElementById('pdf-container').scrollLeft -= dx;
-            document.getElementById('pdf-container').scrollTop -= dy;
-            startX = currentX;
-            startY = currentY;
-        });
-
-        fabricCanvas.on('mouse:up', function(o) {
-            if (mode !== 'move') return;
-            isDragging = false;
-        });
-        
-        fabricCanvas.on('mouse:out', function(o) {
-            if (mode !== 'move') return;
-            isDragging = false;
-        });
-
-        fabricCanvas.on('object:added', () => { if (!fabricCanvas._loading) saveHistory(); });
-
-        setMode('move');
-    </script>
+    fabricCanvas.upperCanvasEl.addEventListener('touchend', () => {
+      lastDist = 0;
+    });
+  </script>
 </body>
 </html>
