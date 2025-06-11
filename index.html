@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>PDF TEST 25061202</title>
+    <title>PDF TEST 25061203</title>
     <style>
         body {
             margin: 0;
@@ -25,6 +25,10 @@
             border-bottom: 1px solid #dee2e6;
             gap: 8px;
             height: 50px; /* Toolbar height */
+        }
+        #toolbar button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
         #toolbar button, #toolbar select, #toolbar input[type="file"]::file-selector-button {
             padding: 6px 12px;
@@ -120,7 +124,6 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
         let pdfDoc = null, pageNum = 1, scale = 1.5;
-        // ✨✨✨ 오류 수정: pdfCanvas 변수 선언 추가 ✨✨✨
         const pdfCanvas = document.getElementById('pdf-canvas');
         const bgCanvas = document.getElementById('pdf-bg-canvas');
         const ctx = bgCanvas.getContext('2d');
@@ -138,6 +141,9 @@
         let history = [], historyIndex = -1;
         let pageDrawings = {};
         let isDragging = false, startX = 0, startY = 0;
+        
+        // ✨✨✨ 오류 수정: 렌더링 중복 실행 방지를 위한 변수 추가 ✨✨✨
+        let isRendering = false;
 
         function setMode(newMode) {
             mode = newMode;
@@ -175,39 +181,49 @@
             };
             reader.readAsArrayBuffer(file);
         }
-
+        
+        // ✨✨✨ 오류 수정: 중복 렌더링 방지 로직 적용 ✨✨✨
         async function renderPage(num) {
-            if (!pdfDoc) return;
-            const page = await pdfDoc.getPage(num);
-            const viewport = page.getViewport({ scale });
-
-            bgCanvas.width = pdfCanvas.width = viewport.width;
-            bgCanvas.height = pdfCanvas.height = viewport.height;
-
-            bgCanvas.style.width = pdfCanvas.style.width = viewport.width + "px";
-            bgCanvas.style.height = pdfCanvas.style.height = viewport.height + "px";
-
-            canvasWrapper.style.width = viewport.width + "px";
-            canvasWrapper.style.height = viewport.height + "px";
-
-            await page.render({ canvasContext: ctx, viewport }).promise;
-
-            fabricCanvas.setWidth(viewport.width);
-            fabricCanvas.setHeight(viewport.height);
-            fabricCanvas.clear();
-
-            if (pageDrawings[num]) {
-                fabricCanvas._loading = true;
-                fabricCanvas.loadFromJSON(pageDrawings[num], () => {
-                    fabricCanvas.renderAll();
-                    fabricCanvas._loading = false;
-                });
-            }
+            if (isRendering || !pdfDoc) return;
+            isRendering = true;
             
-            history = [JSON.stringify(fabricCanvas)];
-            historyIndex = 0;
+            document.querySelectorAll('#toolbar button').forEach(btn => btn.disabled = true);
 
-            document.getElementById('page-num').textContent = pageNum;
+            try {
+                const page = await pdfDoc.getPage(num);
+                const viewport = page.getViewport({ scale });
+
+                bgCanvas.width = pdfCanvas.width = viewport.width;
+                bgCanvas.height = pdfCanvas.height = viewport.height;
+                bgCanvas.style.width = pdfCanvas.style.width = `${viewport.width}px`;
+                bgCanvas.style.height = pdfCanvas.style.height = `${viewport.height}px`;
+                canvasWrapper.style.width = `${viewport.width}px`;
+                canvasWrapper.style.height = `${viewport.height}px`;
+
+                await page.render({ canvasContext: ctx, viewport }).promise;
+
+                fabricCanvas.setWidth(viewport.width);
+                fabricCanvas.setHeight(viewport.height);
+                fabricCanvas.clear();
+
+                if (pageDrawings[num]) {
+                    fabricCanvas._loading = true;
+                    fabricCanvas.loadFromJSON(pageDrawings[num], () => {
+                        fabricCanvas.renderAll();
+                        fabricCanvas._loading = false;
+                    });
+                }
+                
+                history = [JSON.stringify(fabricCanvas)];
+                historyIndex = 0;
+                document.getElementById('page-num').textContent = pageNum;
+
+            } catch(err) {
+                console.error("페이지 렌더링 실패:", err);
+            } finally {
+                isRendering = false;
+                document.querySelectorAll('#toolbar button').forEach(btn => btn.disabled = false);
+            }
         }
 
         function saveCurrentPageDrawing() {
