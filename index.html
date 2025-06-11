@@ -2,135 +2,307 @@
 <html lang="ko">
 
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>PDF 주석 및 서명 도구</title>
-    <style>
-        body {
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            overflow: hidden;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>PDF 주석 및 서명 도구</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      overflow: hidden;
+    }
 
-        #toolbar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background: #f8f9fa;
-            color: #333;
-            padding: 8px 12px;
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            z-index: 1000;
-            border-bottom: 1px solid #dee2e6;
-            gap: 8px;
-        }
+    #toolbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: #f8f9fa;
+      color: #333;
+      padding: 8px 12px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      z-index: 1000;
+      border-bottom: 1px solid #dee2e6;
+      gap: 8px;
+    }
 
-        #toolbar button,
-        #toolbar select,
-        #toolbar input[type="file"]::file-selector-button {
-            padding: 6px 12px;
-            border: 1px solid #ced4da;
-            background-color: #fff;
-            color: #495057;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background-color 0.2s, border-color 0.2s;
-        }
+    #toolbar button,
+    #toolbar select,
+    #toolbar input[type="file"]::file-selector-button {
+      padding: 6px 12px;
+      border: 1px solid #ced4da;
+      background-color: #fff;
+      color: #495057;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
 
-        #toolbar button:hover,
-        #toolbar select:hover,
-        #toolbar input[type="file"]::file-selector-button:hover {
-            background-color: #e9ecef;
-            border-color: #adb5bd;
-        }
+    #toolbar button:hover,
+    #toolbar select:hover,
+    #toolbar input[type="file"]::file-selector-button:hover {
+      background-color: #e9ecef;
+      border-color: #adb5bd;
+    }
 
-        #toolbar span {
-            font-size: 14px;
-            white-space: nowrap;
-        }
+    #toolbar span {
+      font-size: 14px;
+      white-space: nowrap;
+    }
 
-        #pdf-container {
-            position: fixed;
-            top: 60px;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            overflow: auto;
-            background-color: #e9ecef;
-            text-align: center;
-            cursor: grab;
-        }
+    #pdf-container {
+      position: fixed;
+      top: 60px;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      overflow: auto;
+      background-color: #e9ecef;
+      text-align: center;
+    }
 
-        #pdf-container.draw-mode {
-            cursor: crosshair;
-        }
+    #canvas-wrapper {
+      position: relative;
+      display: inline-block;
+      margin: 20px 0;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
 
-        #pdf-container:active {
-            cursor: grabbing;
-        }
+    #pdf-bg-canvas,
+    #pdf-canvas {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
 
-        #canvas-wrapper {
-            position: relative;
-            display: inline-block;
-            margin: 20px 0;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        }
+    #pdf-bg-canvas {
+      z-index: 1;
+    }
 
-        #pdf-bg-canvas,
-        #pdf-canvas {
-            display: block;
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
+    #pdf-canvas {
+      z-index: 2;
+    }
 
-        #pdf-bg-canvas {
-            z-index: 1;
-        }
-
-        #pdf-canvas {
-            z-index: 2;
-        }
-    </style>
+    #mode-indicator {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 1001;
+    }
+  </style>
 </head>
 
 <body>
-    <div id="toolbar">
-        <input type="file" id="pdf-loader" accept="application/pdf" onchange="loadPDF(this.files[0])" title="PDF 파일 열기">
-        <button onclick="prevPage()">⬅ 이전</button>
-        <span>페이지 <span id="page-num">0</span> / <span id="page-count">0</span></span>
-        <button onclick="nextPage()">다음 ➡</button>
-        <button id="mode-toggle" onclick="toggleMode()">이동</button>
-        <input type="color" id="pen-color" value="#E53935" title="펜 색상">
-        <select id="pen-width" title="펜 두께">
-            <option value="1">1</option>
-            <option value="2" selected>2</option>
-            <option value="4">4</option>
-            <option value="8">8</option>
-        </select>
-        <button onclick="undo()">↩ 실행 취소</button>
-        <button onclick="redo()">↪ 다시 실행</button>
-        <button onclick="zoomIn()">➕ 확대</button>
-        <button onclick="zoomOut()">➖ 축소</button>
-        <button onclick="exportPDF()">저장하기</button>
-    </div>
+  <div id="toolbar">
+    <input type="file" id="pdf-loader" accept="application/pdf">
+    <button onclick="prevPage()">⬅ 이전</button>
+    <span>페이지 <span id="page-num">0</span> / <span id="page-count">0</span></span>
+    <button onclick="nextPage()">다음 ➡</button>
+    <button onclick="setMode('move')">이동</button>
+    <button onclick="setMode('draw')">서명</button>
+    <input type="color" id="pen-color" value="#E53935">
+    <select id="pen-width">
+      <option value="1">1</option>
+      <option value="2" selected>2</option>
+      <option value="4">4</option>
+      <option value="8">8</option>
+    </select>
+    <button onclick="undo()">↩ 실행 취소</button>
+    <button onclick="redo()">↪ 다시 실행</button>
+    <button onclick="zoomIn()">➕ 확대</button>
+    <button onclick="zoomOut()">➖ 축소</button>
+    <button onclick="exportPDF()">저장하기</button>
+  </div>
 
-    <div id="pdf-container">
-        <div id="canvas-wrapper">
-            <canvas id="pdf-bg-canvas"></canvas>
-            <canvas id="pdf-canvas"></canvas>
-        </div>
+  <div id="pdf-container">
+    <div id="canvas-wrapper">
+      <canvas id="pdf-bg-canvas"></canvas>
+      <canvas id="pdf-canvas"></canvas>
     </div>
+  </div>
 
-    <!-- Scripts -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js"></script>
+  <div id="mode-indicator">모드: 이동</div>
+
+  <!-- Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script>
+    let pdfDoc = null, pageNum = 1, scale = 1.5;
+    const pdfContainer = document.getElementById('pdf-container');
+    const pdfCanvas = document.getElementById('pdf-canvas');
+    const bgCanvas = document.getElementById('pdf-bg-canvas');
+    const ctx = bgCanvas.getContext('2d');
+    const canvasWrapper = document.getElementById('canvas-wrapper');
+    const penColor = document.getElementById('pen-color');
+    const penWidth = document.getElementById('pen-width');
+    const modeIndicator = document.getElementById('mode-indicator');
+
+    let fabricCanvas = new fabric.Canvas('pdf-canvas', {
+      isDrawingMode: false,
+      selection: false
+    });
+
+    let mode = 'move';
+    let history = [], historyIndex = -1;
+    let startX, startY, isDragging = false;
+
+    function setMode(newMode) {
+      mode = newMode;
+      fabricCanvas.isDrawingMode = (mode === 'draw');
+      modeIndicator.textContent = '모드: ' + (mode === 'move' ? '이동' : '서명');
+    }
+
+    async function loadPDF(file) {
+      const fileReader = new FileReader();
+      fileReader.onload = async function () {
+        const typedArray = new Uint8Array(this.result);
+        pdfDoc = await pdfjsLib.getDocument({ data: typedArray }).promise;
+        document.getElementById('page-count').textContent = pdfDoc.numPages;
+        renderPage(pageNum);
+      };
+      fileReader.readAsArrayBuffer(file);
+    }
+
+    async function renderPage(num) {
+      const page = await pdfDoc.getPage(num);
+      const viewport = page.getViewport({ scale });
+      bgCanvas.width = viewport.width;
+      bgCanvas.height = viewport.height;
+      pdfCanvas.width = viewport.width;
+      pdfCanvas.height = viewport.height;
+      canvasWrapper.style.width = viewport.width + 'px';
+      canvasWrapper.style.height = viewport.height + 'px';
+
+      const renderContext = {
+        canvasContext: ctx,
+        viewport
+      };
+      await page.render(renderContext).promise;
+
+      fabricCanvas.setWidth(viewport.width);
+      fabricCanvas.setHeight(viewport.height);
+      fabricCanvas.renderAll();
+
+      document.getElementById('page-num').textContent = pageNum;
+    }
+
+    function prevPage() {
+      if (pageNum <= 1) return;
+      pageNum--;
+      renderPage(pageNum);
+    }
+
+    function nextPage() {
+      if (pageNum >= pdfDoc.numPages) return;
+      pageNum++;
+      renderPage(pageNum);
+    }
+
+    function zoomIn() {
+      scale *= 1.2;
+      renderPage(pageNum);
+    }
+
+    function zoomOut() {
+      scale /= 1.2;
+      renderPage(pageNum);
+    }
+
+    function saveHistory() {
+      if (historyIndex < history.length - 1) history = history.slice(0, historyIndex + 1);
+      history.push(JSON.stringify(fabricCanvas.toJSON()));
+      historyIndex++;
+    }
+
+    function undo() {
+      if (historyIndex <= 0) return;
+      historyIndex--;
+      fabricCanvas.loadFromJSON(history[historyIndex], fabricCanvas.renderAll.bind(fabricCanvas));
+    }
+
+    function redo() {
+      if (historyIndex >= history.length - 1) return;
+      historyIndex++;
+      fabricCanvas.loadFromJSON(history[historyIndex], fabricCanvas.renderAll.bind(fabricCanvas));
+    }
+
+    function exportPDF() {
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+      pdf.html(canvasWrapper, {
+        callback: function (doc) {
+          doc.save("annotated.pdf");
+        }
+      });
+    }
+
+    fabricCanvas.on('path:created', saveHistory);
+
+    pdfContainer.addEventListener('mousedown', e => {
+      if (mode !== 'move') return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+    });
+
+    pdfContainer.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      pdfContainer.scrollLeft -= dx;
+      pdfContainer.scrollTop -= dy;
+      startX = e.clientX;
+      startY = e.clientY;
+    });
+
+    pdfContainer.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    // 모바일 터치 이동
+    pdfContainer.addEventListener('touchstart', e => {
+      if (mode !== 'move') return;
+      const touch = e.touches[0];
+      isDragging = true;
+      startX = touch.clientX;
+      startY = touch.clientY;
+    });
+
+    pdfContainer.addEventListener('touchmove', e => {
+      if (!isDragging) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      pdfContainer.scrollLeft -= dx;
+      pdfContainer.scrollTop -= dy;
+      startX = touch.clientX;
+      startY = touch.clientY;
+    });
+
+    pdfContainer.addEventListener('touchend', () => {
+      isDragging = false;
+    });
+
+    penColor.addEventListener('change', () => {
+      fabricCanvas.freeDrawingBrush.color = penColor.value;
+    });
+    penWidth.addEventListener('change', () => {
+      fabricCanvas.freeDrawingBrush.width = parseInt(penWidth.value, 10);
+    });
+
+    setMode('move');
+  </script>
 </body>
 
 </html>
